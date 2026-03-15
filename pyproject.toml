@@ -1,0 +1,83 @@
+[tool.poetry]
+name = "ai-backend-api"
+version = "0.1.0"
+description = "Production-grade AI Backend API with RAG capabilities"
+authors = []
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.115"
+uvicorn = {version = "^0.34", extras = ["standard"]}
+pydantic = "^2.10"
+pydantic-settings = "^2.7"
+dependency-injector = "^4.48"
+openai = "^1.60"
+qdrant-client = "^1.13"
+redis = {version = "^5.2", extras = ["hiredis"]}
+sse-starlette = "^2.2"
+tiktoken = "^0.9"
+httpx = "^0.28"
+structlog = "^25.1"
+python-multipart = "^0.0.18"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.9"
+mypy = "^1.14"
+pytest = "^8.3"
+pytest-asyncio = "^0.25"
+pytest-cov = "^6.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "S",    # flake8-bandit
+    "A",    # flake8-builtins
+    "C4",   # flake8-comprehensions
+    "DTZ",  # flake8-datetimez
+    "T20",  # flake8-print
+    "RET",  # flake8-return
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "ARG",  # flake8-unused-arguments
+    "PTH",  # flake8-use-pathlib
+    "RUF",  # Ruff-specific rules
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "dependency_injector.*"
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
