@@ -116,8 +116,7 @@ class OpenAIChatService(ChatProvider):
 
         return ChatResponse(
             message=assistant_message,
-            usage=token_usage,
-            model=model,
+            token_usage=token_usage,
         )
 
     async def stream(self, messages: list[ChatMessage]) -> AsyncGenerator[str, None]:

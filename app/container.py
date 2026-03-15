@@ -1,9 +1,8 @@
 """Dependency injection container — the composition root.
 
 This container wires all application layers together using
-dependency-injector's DeclarativeContainer. Infrastructure
-providers are declared as Dependency stubs that MUST be
-provided before the container is used.
+dependency-injector's DeclarativeContainer. All infrastructure
+providers are concrete Singleton/Factory instances.
 """
 
 from __future__ import annotations
@@ -11,12 +10,19 @@ from __future__ import annotations
 from dependency_injector import containers, providers
 
 from app.core.config.settings import Settings, get_settings
-from app.domain.repositories.chat_repository import ChatHistoryRepository
-from app.domain.repositories.chunk_repository import ChunkRepository
-from app.domain.repositories.document_repository import DocumentRepository
-from app.domain.repositories.vector_repository import VectorRepository
 from app.domain.services.chunking_service import ChunkingStrategy, SimpleChunkingStrategy
-from app.domain.services.token_service import TokenService
+
+# Infrastructure imports
+from app.infrastructure.cache.rate_limiter import RedisRateLimiter
+from app.infrastructure.cache.redis_cache import RedisCache
+from app.infrastructure.llm.openai_chat import OpenAIChatService
+from app.infrastructure.llm.openai_embedding import OpenAIEmbeddingService
+from app.infrastructure.queue.worker import BackgroundWorker
+from app.infrastructure.repositories.memory_chunk_repo import InMemoryChunkRepository
+from app.infrastructure.repositories.memory_document_repo import InMemoryDocumentRepository
+from app.infrastructure.repositories.redis_chat_repo import RedisChatHistoryRepository
+from app.infrastructure.token.tiktoken_service import TiktokenService
+from app.infrastructure.vector_db.qdrant_adapter import QdrantVectorRepository
 
 
 class Container(containers.DeclarativeContainer):
@@ -25,16 +31,16 @@ class Container(containers.DeclarativeContainer):
     Provides:
     - Configuration and settings
     - Domain services (concrete)
-    - Repository stubs (must be overridden with implementations)
-    - Infrastructure stubs (must be overridden with implementations)
+    - Infrastructure adapters (concrete)
+    - Repository implementations (concrete)
 
-    Phase 2 will override the Dependency stubs with concrete implementations.
     Phase 3 will add use case Factory providers.
     """
 
     wiring_config = containers.WiringConfiguration(
         modules=[
             "app.api.routers",
+            "app.main",
         ],
     )
 
@@ -52,34 +58,73 @@ class Container(containers.DeclarativeContainer):
         SimpleChunkingStrategy,
     )
 
-    # ──────────────────────────────────────────────
-    # Repository Interfaces (stubs — must be provided)
-    # These are the dependency inversion points.
-    # Phase 2 will override them with concrete implementations.
-    # ──────────────────────────────────────────────
-
-    document_repository: providers.Dependency[DocumentRepository] = providers.Dependency(
-        instance_of=DocumentRepository,
-    )
-
-    chunk_repository: providers.Dependency[ChunkRepository] = providers.Dependency(
-        instance_of=ChunkRepository,
-    )
-
-    vector_repository: providers.Dependency[VectorRepository] = providers.Dependency(
-        instance_of=VectorRepository,
-    )
-
-    chat_history_repository: providers.Dependency[ChatHistoryRepository] = providers.Dependency(
-        instance_of=ChatHistoryRepository,
+    token_service: providers.Singleton[TiktokenService] = providers.Singleton(
+        TiktokenService,
     )
 
     # ──────────────────────────────────────────────
-    # Infrastructure Services (stubs — must be provided)
+    # Infrastructure — Redis
     # ──────────────────────────────────────────────
 
-    token_service: providers.Dependency[TokenService] = providers.Dependency(
-        instance_of=TokenService,
+    redis_cache: providers.Singleton[RedisCache] = providers.Singleton(
+        RedisCache,
+        url=settings.provided.redis.url,
+    )
+
+    rate_limiter: providers.Singleton[RedisRateLimiter] = providers.Singleton(
+        RedisRateLimiter,
+        redis_cache=redis_cache,
+        requests_per_minute=settings.provided.rate_limit.requests_per_minute,
+        burst_size=settings.provided.rate_limit.burst_size,
+    )
+
+    # ──────────────────────────────────────────────
+    # Infrastructure — LLM Providers
+    # ──────────────────────────────────────────────
+
+    embedding_provider: providers.Singleton[OpenAIEmbeddingService] = providers.Singleton(
+        OpenAIEmbeddingService,
+        settings=settings.provided.openai,
+    )
+
+    chat_provider: providers.Singleton[OpenAIChatService] = providers.Singleton(
+        OpenAIChatService,
+        settings=settings.provided.openai,
+    )
+
+    # ──────────────────────────────────────────────
+    # Infrastructure — Vector Database
+    # ──────────────────────────────────────────────
+
+    vector_repository: providers.Singleton[QdrantVectorRepository] = providers.Singleton(
+        QdrantVectorRepository,
+        settings=settings.provided.qdrant,
+    )
+
+    # ──────────────────────────────────────────────
+    # Infrastructure — Repositories
+    # ──────────────────────────────────────────────
+
+    document_repository: providers.Singleton[InMemoryDocumentRepository] = providers.Singleton(
+        InMemoryDocumentRepository,
+    )
+
+    chunk_repository: providers.Singleton[InMemoryChunkRepository] = providers.Singleton(
+        InMemoryChunkRepository,
+    )
+
+    chat_history_repository: providers.Singleton[RedisChatHistoryRepository] = providers.Singleton(
+        RedisChatHistoryRepository,
+        redis_cache=redis_cache,
+    )
+
+    # ──────────────────────────────────────────────
+    # Infrastructure — Background Worker
+    # ──────────────────────────────────────────────
+
+    background_worker: providers.Singleton[BackgroundWorker] = providers.Singleton(
+        BackgroundWorker,
+        max_concurrent=5,
     )
 
     # ──────────────────────────────────────────────

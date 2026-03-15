@@ -1,1 +1,1 @@
-"""Background worker implementations."""
+"""Queue/worker infrastructure package."""

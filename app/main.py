@@ -19,17 +19,48 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager.
 
     Handles startup and shutdown events for the FastAPI application.
+    Initializes and cleans up infrastructure resources.
     """
     logger = get_logger("app.main")
+    container: Container = app.state.container  # type: ignore[attr-defined]
+    settings = container.settings()
+
     logger.info("Application starting", app_name=app.title, version=app.version)
 
-    # Startup: initialize resources
-    # Phase 2 will add: container.init_resources()
+    # ── Startup ──────────────────────────────────
+    # Ensure Qdrant collection exists
+    vector_repo = container.vector_repository()
+    await vector_repo.ensure_collection(
+        collection_name=settings.qdrant.collection_name,
+        vector_size=settings.openai.embedding_dimensions,
+    )
+
+    # Start background worker
+    worker = container.background_worker()
+    await worker.start()
+
+    logger.info(
+        "Infrastructure initialized",
+        qdrant_collection=settings.qdrant.collection_name,
+        redis_url=settings.redis.url.split("@")[-1] if "@" in settings.redis.url else settings.redis.url,
+    )
+
     yield
 
-    # Shutdown: cleanup resources
+    # ── Shutdown ──────────────────────────────────
     logger.info("Application shutting down")
-    # Phase 2 will add: container.shutdown_resources()
+
+    # Stop background worker
+    await worker.stop()
+
+    # Close Redis connection
+    redis_cache = container.redis_cache()
+    await redis_cache.close()
+
+    # Close Qdrant client
+    await vector_repo.close()
+
+    logger.info("All resources cleaned up")
 
 
 def create_app() -> FastAPI:
@@ -63,7 +94,6 @@ def create_app() -> FastAPI:
     app.state.container = container  # type: ignore[attr-defined]
 
     # Wire container to modules
-    # Note: wiring is configured in Container.wiring_config
     container.wire(modules=["app.main"])
 
     # ──────────────────────────────────────────────
