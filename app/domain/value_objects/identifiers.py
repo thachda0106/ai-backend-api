@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import uuid
-from typing import Self
 
 from pydantic import Field
+from typing_extensions import Self
 
 from app.domain.value_objects.base import ValueObject
 

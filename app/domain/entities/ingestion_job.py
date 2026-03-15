@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from pydantic import Field
@@ -69,7 +69,7 @@ class IngestionJob(Entity):
         self.status = new_status
 
         if new_status == IngestionStatus.EXTRACTING and self.started_at is None:
-            self.started_at = datetime.now(UTC)
+            self.started_at = datetime.now(timezone.utc)
 
         self.update()
 
@@ -97,7 +97,7 @@ class IngestionJob(Entity):
     def complete(self) -> None:
         """Mark the job as completed."""
         self.status = IngestionStatus.COMPLETED
-        self.completed_at = datetime.now(UTC)
+        self.completed_at = datetime.now(timezone.utc)
         self.error_message = None
         self.update()
 
