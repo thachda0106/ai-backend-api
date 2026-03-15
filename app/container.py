@@ -24,17 +24,24 @@ from app.infrastructure.repositories.redis_chat_repo import RedisChatHistoryRepo
 from app.infrastructure.token.tiktoken_service import TiktokenService
 from app.infrastructure.vector_db.qdrant_adapter import QdrantVectorRepository
 
+# Application layer imports
+from app.application.services.context_service import ContextService
+from app.application.services.prompt_service import PromptService
+from app.application.use_cases.ingest_document import IngestDocumentUseCase
+from app.application.use_cases.process_document import ProcessDocumentUseCase
+from app.application.use_cases.rag_chat import RAGChatUseCase
+from app.application.use_cases.search_documents import SearchDocumentsUseCase
+
 
 class Container(containers.DeclarativeContainer):
     """Application DI container.
 
     Provides:
     - Configuration and settings
-    - Domain services (concrete)
-    - Infrastructure adapters (concrete)
-    - Repository implementations (concrete)
-
-    Phase 3 will add use case Factory providers.
+    - Domain services (concrete Singletons)
+    - Infrastructure adapters (concrete Singletons)
+    - Application services (Singletons)
+    - Use cases (Factory — new instance per request)
     """
 
     wiring_config = containers.WiringConfiguration(
@@ -128,5 +135,53 @@ class Container(containers.DeclarativeContainer):
     )
 
     # ──────────────────────────────────────────────
-    # Use Cases (Phase 3 — will be added as Factory providers)
+    # Application Services (Singletons — stateless)
     # ──────────────────────────────────────────────
+
+    prompt_service: providers.Singleton[PromptService] = providers.Singleton(
+        PromptService,
+    )
+
+    context_service: providers.Singleton[ContextService] = providers.Singleton(
+        ContextService,
+        token_service=token_service,
+        max_context_tokens=3000,
+    )
+
+    # ──────────────────────────────────────────────
+    # Use Cases (Factory — new instance per request)
+    # ──────────────────────────────────────────────
+
+    process_document: providers.Factory[ProcessDocumentUseCase] = providers.Factory(
+        ProcessDocumentUseCase,
+        document_repository=document_repository,
+        chunk_repository=chunk_repository,
+        vector_repository=vector_repository,
+        embedding_provider=embedding_provider,
+        chunking_strategy=chunking_strategy,
+        token_service=token_service,
+    )
+
+    ingest_document: providers.Factory[IngestDocumentUseCase] = providers.Factory(
+        IngestDocumentUseCase,
+        document_repository=document_repository,
+        background_worker=background_worker,
+    )
+
+    search_documents: providers.Factory[SearchDocumentsUseCase] = providers.Factory(
+        SearchDocumentsUseCase,
+        embedding_provider=embedding_provider,
+        vector_repository=vector_repository,
+        token_service=token_service,
+    )
+
+    rag_chat: providers.Factory[RAGChatUseCase] = providers.Factory(
+        RAGChatUseCase,
+        search_use_case=search_documents,
+        chat_provider=chat_provider,
+        prompt_service=prompt_service,
+        context_service=context_service,
+        chat_history_repository=chat_history_repository,
+        token_service=token_service,
+    )
+
