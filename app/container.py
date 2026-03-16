@@ -46,9 +46,7 @@ class Container(containers.DeclarativeContainer):
 
     wiring_config = containers.WiringConfiguration(
         modules=[
-            "app.api.routers",
             "app.main",
-            "app.api.dependencies.container",
         ],
     )
 

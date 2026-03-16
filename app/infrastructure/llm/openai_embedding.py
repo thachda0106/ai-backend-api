@@ -82,10 +82,9 @@ class OpenAIEmbeddingService(EmbeddingProvider):
                 error=str(exc),
             )
             raise LLMConnectionException(
-                provider="openai",
-                message=f"Failed to connect to OpenAI: {exc}",
+                detail=str(exc),
             ) from exc
-        except openai.APIError as exc:
+        except openai.OpenAIError as exc:
             await logger.aerror(
                 "openai_embedding_error",
                 model=model,
@@ -93,7 +92,7 @@ class OpenAIEmbeddingService(EmbeddingProvider):
                 error=str(exc),
             )
             raise EmbeddingException(
-                message=f"OpenAI embedding failed: {exc}",
+                detail=str(exc),
             ) from exc
 
         elapsed = time.monotonic() - start_time

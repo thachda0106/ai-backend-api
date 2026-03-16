@@ -13,14 +13,14 @@ from app.api.schemas.chat import ChatResponse as ApiChatResponse
 from app.api.schemas.chat import SourceResponse as ApiSourceResponse
 from app.api.schemas.common import ErrorResponse
 from app.application.dto.chat import ChatRequest as DtoChatRequest
-from app.core.security.api_key import RequireAPIKey
+from app.core.security.api_key import get_api_key
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(
     prefix="/chat",
     tags=["Chat"],
-    dependencies=[Depends(RequireAPIKey)],
+    dependencies=[Depends(get_api_key)],
     responses={
         400: {"model": ErrorResponse, "description": "Bad Request"},
         401: {"model": ErrorResponse, "description": "Unauthorized"},

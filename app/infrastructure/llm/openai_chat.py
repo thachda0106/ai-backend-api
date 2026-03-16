@@ -69,19 +69,17 @@ class OpenAIChatService(ChatProvider):
         except openai.APIConnectionError as exc:
             await logger.aerror("openai_chat_connection_error", model=model, error=str(exc))
             raise LLMConnectionException(
-                provider="openai",
-                message=f"Failed to connect to OpenAI: {exc}",
+                detail=str(exc),
             ) from exc
         except openai.BadRequestError as exc:
             # Check for context window / token limit errors
             if "maximum context length" in str(exc).lower() or "max_tokens" in str(exc).lower():
                 raise TokenLimitExceededException(
-                    model=model,
                     token_count=0,
-                    token_limit=self._settings.max_tokens,
+                    max_tokens=self._settings.max_tokens,
                 ) from exc
             raise LLMException(message=f"OpenAI chat failed: {exc}") from exc
-        except openai.APIError as exc:
+        except openai.OpenAIError as exc:
             await logger.aerror(
                 "openai_chat_error",
                 model=model,
@@ -141,10 +139,9 @@ class OpenAIChatService(ChatProvider):
         except openai.APIConnectionError as exc:
             await logger.aerror("openai_stream_connection_error", model=model, error=str(exc))
             raise LLMConnectionException(
-                provider="openai",
-                message=f"Failed to connect to OpenAI: {exc}",
+                detail=str(exc),
             ) from exc
-        except openai.APIError as exc:
+        except openai.OpenAIError as exc:
             await logger.aerror("openai_stream_error", model=model, error=str(exc))
             raise LLMException(message=f"OpenAI stream failed: {exc}") from exc
 
@@ -156,7 +153,7 @@ class OpenAIChatService(ChatProvider):
                     if delta.content:
                         token_count += 1
                         yield delta.content
-        except openai.APIError as exc:
+        except openai.OpenAIError as exc:
             await logger.aerror("openai_stream_interrupted", model=model, error=str(exc))
             raise LLMException(message=f"OpenAI stream interrupted: {exc}") from exc
 

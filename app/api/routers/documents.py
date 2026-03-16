@@ -13,12 +13,12 @@ from app.api.schemas.document import (
 from app.application.dto.document import (
     IngestDocumentRequest as DtoIngestRequest,
 )
-from app.core.security.api_key import RequireAPIKey
+from app.core.security.api_key import get_api_key
 
 router = APIRouter(
     prefix="/documents",
     tags=["Documents"],
-    dependencies=[Depends(RequireAPIKey)],
+    dependencies=[Depends(get_api_key)],
     responses={
         400: {"model": ErrorResponse, "description": "Bad Request"},
         401: {"model": ErrorResponse, "description": "Unauthorized"},

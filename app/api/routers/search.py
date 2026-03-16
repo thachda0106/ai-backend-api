@@ -8,12 +8,12 @@ from app.api.schemas.search import SearchRequest as ApiSearchRequest
 from app.api.schemas.search import SearchResponse as ApiSearchResponse
 from app.api.schemas.search import SearchResultResponse
 from app.application.dto.search import SearchRequest as DtoSearchRequest
-from app.core.security.api_key import RequireAPIKey
+from app.core.security.api_key import get_api_key
 
 router = APIRouter(
     prefix="/search",
     tags=["Search"],
-    dependencies=[Depends(RequireAPIKey)],
+    dependencies=[Depends(get_api_key)],
     responses={
         400: {"model": ErrorResponse, "description": "Bad Request"},
         401: {"model": ErrorResponse, "description": "Unauthorized"},
