@@ -81,8 +81,12 @@ Create the FastAPI dependency injection functions that bridge the DI container t
     app/api/middleware/__init__.py
   </files>
   <action>
-    **request_logging.py — RequestLoggingMiddleware:**
-    - Subclass `starlette.middleware.base.BaseHTTPMiddleware`
+    **RESEARCH FINDING:** Do NOT use `BaseHTTPMiddleware` — it has known performance overhead
+    and body-read issues (see RESEARCH.md §2). Use standalone middleware functions registered
+    via `add_middleware_function()` helper or applied directly in `create_app()`.
+
+    **request_logging.py — create_request_logging_middleware(app):**
+    - Register via `@app.middleware("http")` or return a middleware function
     - On each request:
       1. Generate `request_id` (uuid4)
       2. Create `RequestContext(request_id, method, path, client_ip)`
@@ -94,9 +98,9 @@ Create the FastAPI dependency injection functions that bridge the DI container t
       8. Call `clear_request_context()`
     - Skip logging for `/health` endpoint
 
-    **rate_limit.py — RateLimitMiddleware:**
-    - Subclass `starlette.middleware.base.BaseHTTPMiddleware`
-    - Takes `rate_limiter: RedisRateLimiter` in __init__
+    **rate_limit.py — create_rate_limit_middleware(rate_limiter):**
+    - Return a middleware function (closure over rate_limiter instance)
+    - The returned function is registered via `app.middleware("http")` in create_app()
     - On each request:
       1. Extract API key from `X-API-Key` header (or use client IP as fallback)
       2. Call `rate_limiter.is_allowed(key)`
@@ -105,27 +109,29 @@ Create the FastAPI dependency injection functions that bridge the DI container t
     - Skip rate limiting for `/health` endpoint
 
     **error_handler.py — register_exception_handlers(app):**
-    - Function that registers exception handlers on the FastAPI app
+    - Function that registers exception handlers on the FastAPI app via `@app.exception_handler()`
     - Map domain exceptions to HTTP status codes:
       - `EntityNotFoundException` → 404
       - `ValidationException` → 422
       - `BusinessRuleViolation` → 409
       - `LLMRateLimitException` → 429
       - `LLMConnectionException` → 502
+      - `TokenLimitExceededException` → 413
       - `DomainException` (catch-all) → 400
       - `RequestValidationError` (Pydantic) → 422
       - `Exception` (catch-all) → 500
     - All responses use `ErrorResponse` schema
     - Log all exceptions with structlog
 
-    **__init__.py:** Re-export middleware classes and register function.
+    **__init__.py:** Re-export middleware factory functions and register function.
   </action>
-  <verify>python -m poetry run python -c "from app.api.middleware.request_logging import RequestLoggingMiddleware; from app.api.middleware.rate_limit import RateLimitMiddleware; from app.api.middleware.error_handler import register_exception_handlers; print('Middleware OK')"</verify>
+  <verify>python -m poetry run python -c "from app.api.middleware.request_logging import create_request_logging_middleware; from app.api.middleware.rate_limit import create_rate_limit_middleware; from app.api.middleware.error_handler import register_exception_handlers; print('Middleware OK')"</verify>
   <done>All middleware importable and properly structured</done>
 </task>
 
 ## Success Criteria
 - [ ] Container dependency functions extract use cases from app.state.container
-- [ ] RequestLoggingMiddleware binds structlog context and adds X-Request-ID
-- [ ] RateLimitMiddleware uses RedisRateLimiter and returns 429
+- [ ] Request logging middleware binds structlog context and adds X-Request-ID
+- [ ] Rate limit middleware uses RedisRateLimiter and returns 429
 - [ ] Exception handlers map all domain exceptions to correct HTTP status codes
+- [ ] No use of BaseHTTPMiddleware (per research findings)
