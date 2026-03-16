@@ -59,9 +59,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Close Qdrant client
     await vector_repo.close()
+from fastapi import FastAPI
+from starlette.responses import JSONResponse
 
-    logger.info("All resources cleaned up")
+from app.api.middleware.error_handler import register_exception_handlers
+from app.api.middleware.rate_limit import create_rate_limit_middleware
+from app.api.middleware.request_logging import request_logging_middleware
+from app.api.routers import api_router
+from app.container import Container
+from app.core.config.settings import get_settings
+from app.core.logging.setup import configure_logging, get_logger
 
+logger = get_logger(__name__)
+
+# [lifespan definition remains unchanged above this point]
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application.
@@ -97,6 +108,30 @@ def create_app() -> FastAPI:
     container.wire(modules=["app.main"])
 
     # ──────────────────────────────────────────────
+    # Exception Handlers
+    # ──────────────────────────────────────────────
+    register_exception_handlers(app)
+
+    # ──────────────────────────────────────────────
+    # Middleware
+    # ──────────────────────────────────────────────
+    # Starlette executes middleware in reverse order of addition.
+    # We want Logging wrapping Rate Limiting wrapping Routers.
+    # Therefore we add Rate Limiting first, then Logging.
+
+    # 1. Rate Limiting (inner)
+    rate_limiter = container.rate_limiter()
+    app.middleware("http")(create_rate_limit_middleware(rate_limiter))
+
+    # 2. Request Logging (outer)
+    app.middleware("http")(request_logging_middleware)
+
+    # ──────────────────────────────────────────────
+    # Routers
+    # ──────────────────────────────────────────────
+    app.include_router(api_router)
+
+    # ──────────────────────────────────────────────
     # Health check endpoint
     # ──────────────────────────────────────────────
 
@@ -108,25 +143,6 @@ def create_app() -> FastAPI:
             "version": "0.1.0",
             "app_name": settings.app_name,
         }
-
-    # ──────────────────────────────────────────────
-    # Global exception handler
-    # ──────────────────────────────────────────────
-
-    @app.exception_handler(Exception)
-    async def global_exception_handler(
-        request: Any,  # noqa: ARG001
-        exc: Exception,
-    ) -> JSONResponse:
-        """Catch unhandled exceptions and return a clean error response."""
-        logger.exception("Unhandled exception", error=str(exc))
-        return JSONResponse(
-            status_code=500,
-            content={
-                "detail": "Internal server error",
-                "code": "INTERNAL_ERROR",
-            },
-        )
 
     logger.info(
         "Application configured",

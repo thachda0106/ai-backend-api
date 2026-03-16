@@ -48,6 +48,7 @@ class Container(containers.DeclarativeContainer):
         modules=[
             "app.api.routers",
             "app.main",
+            "app.api.dependencies.container",
         ],
     )
 
