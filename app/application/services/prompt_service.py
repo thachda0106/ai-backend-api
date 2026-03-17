@@ -1,13 +1,17 @@
-"""Prompt template service for RAG pipelines.
+"""Prompt template service — CRIT-7 Fix (prompt injection safety).
 
-Builds system prompts with context injection and citation instructions.
+Uses a safe string replacement instead of .format() to prevent
+crafted context content from escaping the template.
 """
 
 from __future__ import annotations
 
 from app.domain.entities.chat import ChatMessage, MessageRole
 
-_RAG_SYSTEM_PROMPT = """You are a helpful AI assistant. Answer questions based ONLY on the provided context.
+# Safe placeholder that cannot appear in user content
+_CONTEXT_PLACEHOLDER = "%%CONTEXT%%"
+
+_RAG_SYSTEM_PROMPT = f"""You are a helpful AI assistant. Answer questions based ONLY on the provided context.
 
 Rules:
 1. Use ONLY the information from the [CONTEXT] section below
@@ -17,17 +21,18 @@ Rules:
 5. Do not make up information not present in the context
 
 [CONTEXT]
-{context}
+{_CONTEXT_PLACEHOLDER}
 [END CONTEXT]"""
 
-_DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant. Be concise and accurate in your responses."""
+_DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant. Be concise and accurate in your responses."
 
 
 class PromptService:
     """Builds prompts for RAG chat interactions.
 
-    Handles system prompt construction with context injection
-    and citation-formatted context blocks.
+    Safe context injection: uses explicit placeholder replacement
+    instead of Python .format(), which would allow {braces} in
+    document content to corrupt the template structure.
     """
 
     def build_system_prompt(self) -> str:
@@ -43,7 +48,7 @@ class PromptService:
         """Build a complete message list for RAG chat.
 
         Args:
-            query: The user's question.
+            query:   The user's question.
             context: Pre-formatted context string with numbered blocks.
             history: Optional previous chat messages for continuity.
 
@@ -52,19 +57,17 @@ class PromptService:
         """
         messages: list[ChatMessage] = []
 
-        # System prompt with injected context
-        system_content = _RAG_SYSTEM_PROMPT.format(context=context)
-        messages.append(
-            ChatMessage(role=MessageRole.SYSTEM, content=system_content)
-        )
+        # CRIT-7 Fix: safe replacement, not .format(context=context)
+        # This prevents { or } in document content from corrupting the template
+        system_content = _RAG_SYSTEM_PROMPT.replace(_CONTEXT_PLACEHOLDER, context)
 
-        # Append chat history for conversation continuity
+        messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content))
+
+        # Append conversation history (last N messages for continuity)
         if history:
             messages.extend(history)
 
         # Current user query
-        messages.append(
-            ChatMessage(role=MessageRole.USER, content=query)
-        )
+        messages.append(ChatMessage(role=MessageRole.USER, content=query))
 
         return messages

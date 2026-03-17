@@ -11,6 +11,7 @@ import pytest
 from app.domain.entities.document import Document, DocumentStatus
 from app.domain.entities.ingestion_job import IngestionJob
 from app.domain.value_objects.identifiers import CollectionId, DocumentId
+from app.domain.value_objects.tenant_id import TenantId
 
 
 # ── Domain Builders ────────────────────────────────────────────────────────────
@@ -24,15 +25,21 @@ def make_document_id() -> DocumentId:
     return DocumentId(value=uuid.uuid4())
 
 
+def make_tenant_id() -> TenantId:
+    return TenantId(value=uuid.uuid4())
+
+
 def make_document(
     *,
     title: str = "Test Document",
     content: str = "This is test content for the document.",
     collection_id: CollectionId | None = None,
+    tenant_id: TenantId | None = None,
     status: DocumentStatus = DocumentStatus.PENDING,
 ) -> Document:
     """Build a Document entity with sensible defaults."""
     return Document(
+        tenant_id=tenant_id or make_tenant_id(),
         document_id=make_document_id(),
         collection_id=collection_id or make_collection_id(),
         title=title,
@@ -65,11 +72,13 @@ def mock_vector_repo() -> MagicMock:
 
 
 @pytest.fixture
-def mock_background_worker() -> MagicMock:
-    """Mock BackgroundWorker."""
-    worker = MagicMock()
-    worker.enqueue = AsyncMock()
-    return worker
+def mock_arq_pool() -> MagicMock:
+    """Mock ARQ Redis pool — replaces BackgroundWorker."""
+    pool = MagicMock()
+    mock_job = MagicMock()
+    mock_job.job_id = "arq-test-job-id"
+    pool.enqueue_job = AsyncMock(return_value=mock_job)
+    return pool
 
 
 @pytest.fixture

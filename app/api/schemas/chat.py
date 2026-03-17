@@ -27,6 +27,7 @@ class ChatRequest(BaseModel):
     message: str = Field(
         ...,
         min_length=1,
+        max_length=4000,  # CRIT-7: prevent unbounded token burn
         description="User message / question to answer using RAG",
     )
     conversation_id: str | None = Field(

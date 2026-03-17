@@ -9,6 +9,7 @@ from pydantic import Field
 from app.domain.entities.base import Entity
 from app.domain.value_objects.embedding import EmbeddingVector
 from app.domain.value_objects.identifiers import ChunkId, CollectionId, DocumentId
+from app.domain.value_objects.tenant_id import TenantId
 
 
 class Chunk(Entity):
@@ -19,6 +20,7 @@ class Chunk(Entity):
     and may optionally have an embedding attached.
     """
 
+    tenant_id: TenantId
     chunk_id: ChunkId = Field(default_factory=ChunkId)
     document_id: DocumentId
     collection_id: CollectionId

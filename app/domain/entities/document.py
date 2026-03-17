@@ -9,6 +9,7 @@ from pydantic import Field
 
 from app.domain.entities.base import Entity
 from app.domain.value_objects.identifiers import CollectionId, DocumentId
+from app.domain.value_objects.tenant_id import TenantId
 
 
 class DocumentStatus(str, Enum):
@@ -28,6 +29,7 @@ class Document(Entity):
     chunking → embedding → vector storage.
     """
 
+    tenant_id: TenantId
     document_id: DocumentId = Field(default_factory=DocumentId)
     collection_id: CollectionId
     title: str

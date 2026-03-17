@@ -36,6 +36,7 @@ class IngestDocumentRequest(BaseModel):
     content: str = Field(
         ...,
         min_length=1,
+        max_length=500_000,  # CRIT-7: ~100K words max, prevents OOM and token abuse
         description="Full document text content to be chunked and embedded",
     )
     collection_id: str | None = Field(

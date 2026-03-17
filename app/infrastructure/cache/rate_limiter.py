@@ -1,7 +1,10 @@
-"""Redis-based rate limiter.
+"""Redis-based rate limiter — TOCTOU fix with Lua script (IMP-7) + public property (CRIT-8).
 
-Implements sliding window rate limiting using Redis sorted sets
-with pipeline for atomic operations.
+The original implementation had a race condition:
+  pipeline(zremrangebyscore, zcard, zadd) → zadd already done → zrem if over limit
+  Between the pipeline and the zrem, another request could read stale count.
+
+Fix: atomic Lua script does the entire check-and-update in one Redis call.
 """
 
 from __future__ import annotations
@@ -14,12 +17,37 @@ from app.infrastructure.cache.redis_cache import RedisCache
 
 logger = structlog.get_logger(__name__)
 
+# Atomic Lua script: remove expired, check count, conditionally add entry
+# Returns 1 if allowed, 0 if rate limited
+_RATE_LIMIT_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+
+-- Remove entries outside the window
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
+
+-- Count current requests in window
+local count = redis.call('ZCARD', key)
+
+if count < limit then
+    -- Add this request (score = timestamp for ordered eviction)
+    -- Use now+math.random() to avoid duplicate score collisions
+    redis.call('ZADD', key, now, now .. ':' .. math.random(1000000))
+    redis.call('EXPIRE', key, math.ceil(window))
+    return 1
+end
+
+return 0
+"""
+
 
 class RedisRateLimiter:
     """Sliding window rate limiter backed by Redis sorted sets.
 
-    Uses Redis pipelines for atomic check-and-update operations.
-    Each key tracks timestamps of recent requests in a sorted set.
+    Uses an atomic Lua script for all check-and-update operations,
+    eliminating the TOCTOU race condition in the original pipeline approach.
     """
 
     def __init__(
@@ -31,86 +59,82 @@ class RedisRateLimiter:
         self._redis = redis_cache
         self._requests_per_minute = requests_per_minute
         self._burst_size = burst_size
+        self._script: object = None  # Cached registered Lua script
+
+    @property
+    def limit(self) -> int:
+        """Public accessor for the configured rate limit. (CRIT-8 Fix)"""
+        return self._requests_per_minute
 
     def _rate_key(self, key: str) -> str:
-        """Generate the Redis key for rate limiting."""
         return f"rate:{key}"
+
+    async def _get_script(self) -> object:
+        """Register the Lua script once and cache the returned object."""
+        if self._script is None:
+            self._script = self._redis.client.register_script(_RATE_LIMIT_LUA)
+        return self._script
 
     async def is_allowed(self, key: str) -> bool:
         """Check if a request is allowed under the rate limit.
 
-        Uses sliding window algorithm:
-        1. Remove expired entries (older than 60s)
+        Uses an atomic Lua script — genuinely TOCTOU-free (IMP-7 Fix):
+        1. Remove expired entries (> 60s old)
         2. Count remaining entries
-        3. If under limit, add current timestamp and allow
-        4. Otherwise, deny
+        3. If under limit, add current timestamp and return 1 (allowed)
+        4. Else return 0 (denied) — nothing written to Redis
 
         Args:
-            key: The rate limit key (e.g., API key or IP).
+            key: The rate limit key (e.g., API key or IP address).
 
         Returns:
             True if the request is allowed, False if rate limited.
         """
         rate_key = self._rate_key(key)
         now = time.time()
-        window_start = now - 60.0
+        window_seconds = 60.0
 
-        client = self._redis.client
-        async with client.pipeline(transaction=True) as pipe:
-            # Remove old entries outside the window
-            pipe.zremrangebyscore(rate_key, "-inf", window_start)
-            # Count current entries
-            pipe.zcard(rate_key)
-            # Add current request
-            pipe.zadd(rate_key, {str(now): now})
-            # Set key expiration
-            pipe.expire(rate_key, 60)
-
-            results = await pipe.execute()
-
-        current_count: int = results[1]
-
-        if current_count < self._requests_per_minute:
+        try:
+            script = await self._get_script()
+            result = await script(  # type: ignore[operator]
+                keys=[rate_key],
+                args=[now, window_seconds, self._requests_per_minute],
+            )
+            allowed = bool(result)
+        except Exception as exc:
+            # Redis failure: fail open (allow request, don't break service)
+            await logger.awarning(
+                "rate_limiter_lua_error",
+                key=key,
+                error=str(exc),
+            )
             return True
 
-        # Over limit — remove the entry we just added
-        await client.zrem(rate_key, str(now))
+        if not allowed:
+            await logger.awarning(
+                "rate_limit_exceeded",
+                key=key,
+                limit=self._requests_per_minute,
+            )
 
-        await logger.awarning(
-            "rate_limit_exceeded",
-            key=key,
-            current_count=current_count,
-            limit=self._requests_per_minute,
-        )
-        return False
+        return allowed
 
     async def get_remaining(self, key: str) -> int:
-        """Return how many requests remain in the current window.
-
-        Args:
-            key: The rate limit key.
-
-        Returns:
-            Number of remaining allowed requests.
-        """
+        """Return how many requests remain in the current window."""
         rate_key = self._rate_key(key)
         now = time.time()
         window_start = now - 60.0
 
-        client = self._redis.client
-        # Clean up expired entries first
-        await client.zremrangebyscore(rate_key, "-inf", window_start)
-        current_count: int = await client.zcard(rate_key)
-
-        remaining = max(0, self._requests_per_minute - current_count)
-        return remaining
+        try:
+            client = self._redis.client
+            await client.zremrangebyscore(rate_key, "-inf", window_start)
+            current_count: int = await client.zcard(rate_key)
+            return max(0, self._requests_per_minute - current_count)
+        except Exception:
+            return self._requests_per_minute  # fail open
 
     async def reset(self, key: str) -> None:
-        """Clear the rate limit for a key.
-
-        Args:
-            key: The rate limit key to reset.
-        """
+        """Clear the rate limit for a key."""
         rate_key = self._rate_key(key)
         await self._redis.delete(rate_key)
         await logger.ainfo("rate_limit_reset", key=key)

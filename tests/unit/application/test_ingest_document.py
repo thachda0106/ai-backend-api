@@ -1,48 +1,61 @@
-"""Unit tests for IngestDocumentUseCase.
+"""Unit tests for IngestDocumentUseCase — updated for ARQ queue.
 
-Mocks: DocumentRepository, BackgroundWorker.
+Mocks: DocumentRepository, ArqRedis pool.
 No I/O — tests pure orchestration logic.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call
+import uuid
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.application.dto.document import IngestDocumentRequest, IngestDocumentResponse
 from app.application.use_cases.ingest_document import IngestDocumentUseCase
 from app.domain.entities.document import Document, DocumentStatus
-from tests.conftest import make_document
+from app.domain.value_objects.tenant_id import TenantId
+
+
+@pytest.fixture
+def tenant_id() -> TenantId:
+    return TenantId()
 
 
 @pytest.fixture
 def document_repo() -> MagicMock:
     repo = MagicMock()
-    # save() returns the same document it received
+
     async def _save(doc: Document) -> Document:
         return doc
 
     async def _update(doc: Document) -> Document:
         return doc
 
+    async def _find_duplicate(*args: object, **kwargs: object) -> None:
+        return None  # no duplicate by default
+
     repo.save = AsyncMock(side_effect=_save)
     repo.update = AsyncMock(side_effect=_update)
+    repo.find_duplicate = AsyncMock(side_effect=_find_duplicate)
     return repo
 
 
 @pytest.fixture
-def background_worker() -> MagicMock:
-    worker = MagicMock()
-    worker.enqueue = AsyncMock()
-    return worker
+def arq_pool() -> MagicMock:
+    """Mock ARQ Redis pool — replaces BackgroundWorker."""
+    pool = MagicMock()
+    mock_job = MagicMock()
+    mock_job.job_id = "arq-test-job-id"
+    pool.enqueue_job = AsyncMock(return_value=mock_job)
+    return pool
 
 
 @pytest.fixture
-def use_case(document_repo: MagicMock, background_worker: MagicMock) -> IngestDocumentUseCase:
+def use_case(document_repo: MagicMock, arq_pool: MagicMock) -> IngestDocumentUseCase:
     return IngestDocumentUseCase(
         document_repository=document_repo,
-        background_worker=background_worker,
+        arq_pool=arq_pool,
     )
 
 
@@ -62,9 +75,10 @@ class TestIngestDocumentUseCase:
         self,
         use_case: IngestDocumentUseCase,
         ingest_request: IngestDocumentRequest,
+        tenant_id: TenantId,
     ) -> None:
         """execute() returns a valid IngestDocumentResponse."""
-        result = await use_case.execute(ingest_request)
+        result = await use_case.execute(ingest_request, tenant_id)
 
         assert isinstance(result, IngestDocumentResponse)
         assert result.status == "processing"
@@ -77,9 +91,10 @@ class TestIngestDocumentUseCase:
         use_case: IngestDocumentUseCase,
         document_repo: MagicMock,
         ingest_request: IngestDocumentRequest,
+        tenant_id: TenantId,
     ) -> None:
         """Document is saved exactly once."""
-        await use_case.execute(ingest_request)
+        await use_case.execute(ingest_request, tenant_id)
         document_repo.save.assert_called_once()
 
     @pytest.mark.asyncio
@@ -88,35 +103,41 @@ class TestIngestDocumentUseCase:
         use_case: IngestDocumentUseCase,
         document_repo: MagicMock,
         ingest_request: IngestDocumentRequest,
+        tenant_id: TenantId,
     ) -> None:
         """Document is transitioned to PROCESSING status and the update is persisted."""
-        await use_case.execute(ingest_request)
+        await use_case.execute(ingest_request, tenant_id)
 
-        # update() is called after mark_processing()
         document_repo.update.assert_called_once()
         updated_doc: Document = document_repo.update.call_args[0][0]
         assert updated_doc.status == DocumentStatus.PROCESSING
 
     @pytest.mark.asyncio
-    async def test_no_background_enqueue_without_process_use_case(
+    async def test_arq_job_enqueued(
         self,
         use_case: IngestDocumentUseCase,
-        background_worker: MagicMock,
+        arq_pool: MagicMock,
         ingest_request: IngestDocumentRequest,
+        tenant_id: TenantId,
     ) -> None:
-        """Without a process_use_case wired, background_worker.enqueue is NOT called."""
-        await use_case.execute(ingest_request)
-        background_worker.enqueue.assert_not_called()
+        """ARQ enqueue_job() is called with correct task name and args."""
+        await use_case.execute(ingest_request, tenant_id)
+
+        arq_pool.enqueue_job.assert_called_once()
+        call_args = arq_pool.enqueue_job.call_args
+        assert call_args[0][0] == "process_document_task"
+        # First positional arg after task name is tenant_id
+        assert call_args[0][1] == str(tenant_id)
 
     @pytest.mark.asyncio
     async def test_response_ids_are_strings(
         self,
         use_case: IngestDocumentUseCase,
         ingest_request: IngestDocumentRequest,
+        tenant_id: TenantId,
     ) -> None:
         """document_id and job_id are returned as string UUIDs."""
-        result = await use_case.execute(ingest_request)
-        # Should be valid UUID strings (36 chars with dashes)
+        result = await use_case.execute(ingest_request, tenant_id)
         assert len(result.document_id) == 36
         assert len(result.job_id) == 36
 
@@ -126,13 +147,43 @@ class TestIngestDocumentUseCase:
         use_case: IngestDocumentUseCase,
         document_repo: MagicMock,
         ingest_request: IngestDocumentRequest,
+        tenant_id: TenantId,
     ) -> None:
         """When collection_id is provided, it's applied to the document."""
-        import uuid
         custom_id = str(uuid.uuid4())
         ingest_request.collection_id = custom_id
 
-        await use_case.execute(ingest_request)
+        await use_case.execute(ingest_request, tenant_id)
 
         saved_doc: Document = document_repo.save.call_args[0][0]
         assert str(saved_doc.collection_id.value) == custom_id
+
+    @pytest.mark.asyncio
+    async def test_duplicate_content_returns_existing(
+        self,
+        document_repo: MagicMock,
+        arq_pool: MagicMock,
+        ingest_request: IngestDocumentRequest,
+        tenant_id: TenantId,
+    ) -> None:
+        """If find_duplicate() returns an existing doc, no new doc is saved."""
+        from tests.conftest import make_collection_id, make_document_id
+        existing_doc = Document(
+            tenant_id=tenant_id,
+            document_id=make_document_id(),
+            collection_id=make_collection_id(),
+            title="Existing",
+            content=ingest_request.content,
+            content_type="text/plain",
+        )
+        document_repo.find_duplicate = AsyncMock(return_value=existing_doc)
+
+        use_case = IngestDocumentUseCase(
+            document_repository=document_repo,
+            arq_pool=arq_pool,
+        )
+        result = await use_case.execute(ingest_request, tenant_id)
+
+        assert result.status == "duplicate"
+        document_repo.save.assert_not_called()
+        arq_pool.enqueue_job.assert_not_called()

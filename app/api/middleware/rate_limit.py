@@ -68,7 +68,7 @@ def create_rate_limit_middleware(
         try:
             remaining = await rate_limiter.get_remaining(rate_key)
             response.headers["X-RateLimit-Remaining"] = str(remaining)
-            response.headers["X-RateLimit-Limit"] = str(rate_limiter._requests_per_minute)
+            response.headers["X-RateLimit-Limit"] = str(rate_limiter.limit)
         except Exception:
             pass  # Don't fail request if header computation fails
 

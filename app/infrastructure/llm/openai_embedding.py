@@ -1,7 +1,8 @@
-"""OpenAI embedding service implementation.
+"""OpenAI embedding service — with Redis cache-aside (CRIT-4 Fix).
 
-Uses the OpenAI AsyncOpenAI client to generate text embeddings.
-Supports single and batch embedding with built-in retry logic.
+Uses the OpenAI AsyncOpenAI client for text embeddings.
+All calls check Redis cache first to avoid redundant API calls.
+Cache hit rate target: >80% for repeated queries.
 """
 
 from __future__ import annotations
@@ -26,14 +27,21 @@ logger = structlog.get_logger(__name__)
 
 
 class OpenAIEmbeddingService(EmbeddingProvider):
-    """OpenAI-backed embedding provider.
+    """OpenAI-backed embedding provider with Redis caching.
 
-    Uses AsyncOpenAI with built-in retry logic (max_retries from settings).
-    Maps OpenAI exceptions to domain exceptions.
+    Cache strategy:
+    - Single embed: check cache → miss → OpenAI → cache write
+    - Batch embed: separate cached/uncached → call OpenAI for uncached only
+      → write uncached results back to cache
     """
 
-    def __init__(self, settings: OpenAISettings) -> None:
+    def __init__(
+        self,
+        settings: OpenAISettings,
+        cache: Any | None = None,  # RedisCache | None — avoid circular import
+    ) -> None:
         self._settings = settings
+        self._cache = cache
         self._client: AsyncOpenAI | None = None
 
     @property
@@ -47,16 +55,71 @@ class OpenAIEmbeddingService(EmbeddingProvider):
         return self._client
 
     async def embed(self, text: str) -> EmbeddingVector:
-        """Generate an embedding for a single text."""
+        """Generate an embedding for a single text (cache-aware)."""
         results = await self.embed_batch([text])
         return results[0]
 
     async def embed_batch(self, texts: list[str]) -> list[EmbeddingVector]:
-        """Generate embeddings for multiple texts in a single API call."""
+        """Generate embeddings for multiple texts.
+
+        Checks Redis cache per-text before calling OpenAI.
+        Only uncached texts are sent to the API; results are written back.
+        """
         if not texts:
             return []
 
         model = self._settings.embedding_model
+
+        # ── 1. Separate cached vs uncached ────────────────────────────
+        results: list[EmbeddingVector | None] = [None] * len(texts)
+        uncached_indices: list[int] = []
+        uncached_texts: list[str] = []
+        cache_hits = 0
+
+        if self._cache is not None:
+            for i, text in enumerate(texts):
+                cached = await self._cache.get_embedding(text, model)
+                if cached is not None:
+                    results[i] = cached
+                    cache_hits += 1
+                else:
+                    uncached_indices.append(i)
+                    uncached_texts.append(text)
+        else:
+            uncached_indices = list(range(len(texts)))
+            uncached_texts = list(texts)
+
+        await logger.adebug(
+            "embedding_cache_stats",
+            total=len(texts),
+            cache_hits=cache_hits,
+            api_calls_needed=len(uncached_texts),
+        )
+
+        # ── 2. Call OpenAI only for uncached texts ────────────────────
+        if uncached_texts:
+            fresh_embeddings = await self._call_openai(uncached_texts, model)
+
+            # ── 3. Write uncached results back to cache ───────────────
+            for idx, (original_idx, text, embedding) in enumerate(
+                zip(uncached_indices, uncached_texts, fresh_embeddings)
+            ):
+                results[original_idx] = embedding
+                if self._cache is not None:
+                    try:
+                        await self._cache.set_embedding(text, model, embedding)
+                    except Exception as cache_exc:
+                        # Cache write failure is non-critical
+                        await logger.awarning(
+                            "embedding_cache_write_failed", error=str(cache_exc)
+                        )
+
+        return results  # type: ignore[return-value]
+
+    async def _call_openai(
+        self, texts: list[str], model: str
+    ) -> list[EmbeddingVector]:
+        """Make the actual OpenAI embeddings API call."""
         dimensions = self._settings.embedding_dimensions
         start_time = time.monotonic()
 
@@ -66,24 +129,14 @@ class OpenAIEmbeddingService(EmbeddingProvider):
                 input=texts,
             )
         except openai.RateLimitError as exc:
-            await logger.awarning(
-                "openai_rate_limit",
-                model=model,
-                text_count=len(texts),
-            )
+            await logger.awarning("openai_rate_limit", model=model, text_count=len(texts))
             raise LLMRateLimitException(
                 provider="openai",
                 retry_after=_extract_retry_after(exc),
             ) from exc
         except openai.APIConnectionError as exc:
-            await logger.aerror(
-                "openai_connection_error",
-                model=model,
-                error=str(exc),
-            )
-            raise LLMConnectionException(
-                detail=str(exc),
-            ) from exc
+            await logger.aerror("openai_connection_error", model=model, error=str(exc))
+            raise LLMConnectionException(detail=str(exc)) from exc
         except openai.OpenAIError as exc:
             await logger.aerror(
                 "openai_embedding_error",
@@ -91,9 +144,7 @@ class OpenAIEmbeddingService(EmbeddingProvider):
                 status_code=getattr(exc, "status_code", None),
                 error=str(exc),
             )
-            raise EmbeddingException(
-                detail=str(exc),
-            ) from exc
+            raise EmbeddingException(detail=str(exc)) from exc
 
         elapsed = time.monotonic() - start_time
         usage = response.usage
