@@ -1,7 +1,7 @@
 # STATE.md — Project State
 
 > **Last Updated**: 2026-03-17
-> **Current Phase**: 5 — Planning complete
+> **Current Phase**: 5 — Complete and verified
 > **Active Milestone**: v1.0
 
 ## Context
@@ -14,19 +14,18 @@
 ## Current Position
 
 - **Phase**: 5 (Docker & Local Development)
-- **Task**: Planning complete
-- **Status**: Ready for execution
+- **Status**: ✅ Complete and verified
 
-## Last Session Summary
+## Completed Phases
 
-Phase 4 (API Layer & Streaming) is complete and verified. Identified and fixed:
-- OpenAPI schema pollution from `dependency-injector` wiring (`*args/*kwargs` appearing as query params)
-- Exception constructor mismatches in OpenAI provider (`message` vs `detail`, `token_limit` vs `max_tokens`)
-
-Phase 5 research and planning are complete. 3 plans created across 2 waves:
-- Wave 1: Dockerfile + docker-compose.yml
-- Wave 2: Makefile + .dockerignore
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | Core Foundation | ✅ Verified |
+| 2 | Infrastructure Adapters | ✅ Verified |
+| 3 | Application Layer | ✅ Verified |
+| 4 | API Layer & Streaming | ✅ Verified |
+| 5 | Docker & Local Development | ✅ Verified |
 
 ## Next Steps
 
-1. `/execute 5` — Execute Phase 5 plans
+1. `/plan 6` — Terraform Infrastructure (AWS ECS, VPC, ElastiCache, ECR)
