@@ -1,7 +1,7 @@
 # STATE.md — Project State
 
 > **Last Updated**: 2026-03-17
-> **Current Phase**: 5 — Complete and verified
+> **Current Phase**: 6 — Planning complete
 > **Active Milestone**: v1.0
 
 ## Context
@@ -9,12 +9,13 @@
 - **Project**: AI Backend API (RAG Platform)
 - **Type**: Greenfield
 - **Stack**: Python 3.13 / FastAPI / Pydantic v2 / Qdrant / Redis
-- **Architecture**: Clean Architecture + DDD
+- **Infrastructure**: Terraform / AWS ECS Fargate / ElastiCache / EFS
 
 ## Current Position
 
-- **Phase**: 5 (Docker & Local Development)
-- **Status**: ✅ Complete and verified
+- **Phase**: 6 (Terraform Infrastructure)
+- **Task**: Planning complete
+- **Status**: Ready for execution
 
 ## Completed Phases
 
@@ -25,7 +26,8 @@
 | 3 | Application Layer | ✅ Verified |
 | 4 | API Layer & Streaming | ✅ Verified |
 | 5 | Docker & Local Development | ✅ Verified |
+| 6 | Terraform Infrastructure | 🗂 Planned |
 
 ## Next Steps
 
-1. `/plan 6` — Terraform Infrastructure (AWS ECS, VPC, ElastiCache, ECR)
+1. `/execute 6` — Execute Phase 6 plans (create all Terraform files)
