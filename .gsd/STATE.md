@@ -1,26 +1,32 @@
 # STATE.md — Project State
 
-> **Last Updated**: 2026-03-16
-> **Current Phase**: 4 — Completed
+> **Last Updated**: 2026-03-17
+> **Current Phase**: 5 — Planning complete
 > **Active Milestone**: v1.0
 
 ## Context
 
 - **Project**: AI Backend API (RAG Platform)
 - **Type**: Greenfield
-- **Stack**: Python 3.14 / FastAPI / Pydantic v2 / Qdrant / Redis
+- **Stack**: Python 3.13 / FastAPI / Pydantic v2 / Qdrant / Redis
 - **Architecture**: Clean Architecture + DDD
 
 ## Current Position
 
-- **Phase**: 4 (completed)
-- **Task**: All tasks complete
-- **Status**: Verified
+- **Phase**: 5 (Docker & Local Development)
+- **Task**: Planning complete
+- **Status**: Ready for execution
 
 ## Last Session Summary
 
-Phase 4 executed successfully. Implemented API layer with FastAPI routers (`POST /documents`, `POST /search`, `POST /chat`), Pydantic v2 schemas decoupled from internal DTOs, SSE streaming via `sse-starlette`, and robust middleware (rate-limiting, structlog request logging) with explicit exception mapping handlers. Everything wired through Dependency Injector in `app/main.py`.
+Phase 4 (API Layer & Streaming) is complete and verified. Identified and fixed:
+- OpenAPI schema pollution from `dependency-injector` wiring (`*args/*kwargs` appearing as query params)
+- Exception constructor mismatches in OpenAI provider (`message` vs `detail`, `token_limit` vs `max_tokens`)
+
+Phase 5 research and planning are complete. 3 plans created across 2 waves:
+- Wave 1: Dockerfile + docker-compose.yml
+- Wave 2: Makefile + .dockerignore
 
 ## Next Steps
 
-1. Proceed to Phase 5 (Infrastructure Provisioning)
+1. `/execute 5` — Execute Phase 5 plans
